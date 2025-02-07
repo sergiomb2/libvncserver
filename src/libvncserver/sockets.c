@@ -102,6 +102,9 @@ int rfbMaxClientWait = 20000;   /* time (ms) after which we decide client has
                                    gone away - needed to stop us hanging */
 
 static rfbBool
+rfbHasPendingOnSocket(rfbClientPtr cl);
+
+static rfbBool
 rfbNewConnectionFromSock(rfbScreenInfoPtr rfbScreen, rfbSocket sock)
 {
     const int one = 1;
@@ -364,16 +367,20 @@ rfbCheckFds(rfbScreenInfoPtr rfbScreen,long usec)
 	tv.tv_usec = usec;
 	nfds = select(rfbScreen->maxFd + 1, &fds, NULL, NULL /* &fds */, &tv);
 	if (nfds == 0) {
+            rfbBool hasPendingData = FALSE;
+
 	    /* timed out, check for async events */
             i = rfbGetClientIterator(rfbScreen);
             while((cl = rfbClientIteratorNext(i))) {
                 if (cl->onHold)
                     continue;
+                hasPendingData |= rfbHasPendingOnSocket(cl);
                 if (FD_ISSET(cl->sock, &(rfbScreen->allFds)))
                     rfbSendFileTransferChunk(cl);
             }
             rfbReleaseClientIterator(i);
-	    return result;
+            if (!hasPendingData)
+                return result;
 	}
 
 	if (nfds < 0) {
@@ -449,9 +456,11 @@ rfbCheckFds(rfbScreenInfoPtr rfbScreen,long usec)
 	    if (cl->onHold)
 		continue;
 
-            if (FD_ISSET(cl->sock, &(rfbScreen->allFds)))
+            if (rfbHasPendingOnSocket (cl) ||
+                FD_ISSET(cl->sock, &(rfbScreen->allFds)))
             {
-                if (FD_ISSET(cl->sock, &fds))
+                if (rfbHasPendingOnSocket (cl) ||
+                    FD_ISSET(cl->sock, &fds))
                 {
 #ifdef LIBVNCSERVER_WITH_WEBSOCKETS
                     do {
@@ -606,6 +615,30 @@ rfbCloseClient(rfbClientPtr cl)
 }
 
 
+int
+rfbDefaultReadFromSocket(rfbClientPtr cl, char *buf, int len)
+{
+    return read(cl->sock, buf, len);
+}
+
+static int
+rfbReadFromSocket(rfbClientPtr cl, char *buf, int len)
+{
+    return cl->readFromSocket(cl, buf, len);
+}
+
+rfbBool
+rfbDefaultHasPendingOnSocket(rfbClientPtr cl)
+{
+    return FALSE;
+}
+
+static rfbBool
+rfbHasPendingOnSocket(rfbClientPtr cl)
+{
+    return cl->hasPendingOnSocket(cl);
+}
+
 /*
  * rfbConnect is called to make a connection out to a given TCP address.
  */
@@ -678,10 +711,10 @@ rfbReadExactTimeout(rfbClientPtr cl, char* buf, int len, int timeout)
         } else if (cl->sslctx) {
 	    n = rfbssl_read(cl, buf, len);
 	} else {
-            n = read(sock, buf, len);
+            n = rfbReadFromSocket(cl, buf, len);
         }
 #else
-        n = read(sock, buf, len);
+        n = rfbReadFromSocket(cl, buf, len);
 #endif
 
         if (n > 0) {
@@ -713,6 +746,10 @@ rfbReadExactTimeout(rfbClientPtr cl, char* buf, int len, int timeout)
 		    continue;
 	    }
 #endif
+
+            if (rfbHasPendingOnSocket(cl))
+                continue;
+
             FD_ZERO(&fds);
             FD_SET(sock, &fds);
             tv.tv_sec = timeout / 1000;
@@ -749,6 +786,18 @@ int rfbReadExact(rfbClientPtr cl,char* buf,int len)
     return(rfbReadExactTimeout(cl,buf,len,rfbMaxClientWait));
 }
 
+int
+rfbDefaultPeekAtSocket(rfbClientPtr cl, char *buf, int len)
+{
+    return recv(cl->sock, buf, len, MSG_PEEK);
+}
+
+int
+rfbPeekAtSocket(rfbClientPtr cl, char *buf, int len)
+{
+    cl->peekAtSocket(cl, buf, len);
+}
+
 /*
  * PeekExact peeks at an exact number of bytes from a client.  Returns 1 if
  * those bytes have been read, 0 if the other end has closed, or -1 if an
@@ -777,7 +826,7 @@ rfbPeekExactTimeout(rfbClientPtr cl, char* buf, int len, int timeout)
 	    n = rfbssl_peek(cl, buf, len);
 	else
 #endif
-	    n = recv(sock, buf, len, MSG_PEEK);
+            n = rfbPeekAtSocket(cl, buf, len);
 
         if (n == len) {
 
@@ -831,6 +880,22 @@ rfbPeekExactTimeout(rfbClientPtr cl, char* buf, int len, int timeout)
 #endif
 
     return 1;
+}
+
+int
+rfbDefaultWriteToSocket(rfbClientPtr cl,
+			const char *buf,
+			int len)
+{
+    return write(cl->sock, buf, len);
+}
+
+static int
+rfbWriteToSocket(rfbClientPtr cl,
+		 const char *buf,
+		 int len)
+{
+    return cl->writeToSocket(cl, buf, len);
 }
 
 /*
@@ -893,7 +958,7 @@ rfbWriteExact(rfbClientPtr cl,
 	    n = rfbssl_write(cl, buf, len);
 	else
 #endif
-	    n = write(sock, buf, len);
+	    n = rfbWriteToSocket(cl, buf, len);
 
         if (n > 0) {
 
