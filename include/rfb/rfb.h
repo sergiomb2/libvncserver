@@ -147,6 +147,11 @@ typedef struct {
   } data; /**< there have to be count*3 entries */
 } rfbColourMap;
 
+enum rfbSecurityTag {
+    RFB_SECURITY_TAG_NONE = 0,
+    RFB_SECURITY_TAG_CHANNEL = 1 << 0
+};
+
 /**
  * Security handling (RFB protocol version 3.7)
  */
@@ -155,6 +160,7 @@ typedef struct _rfbSecurity {
 	uint8_t type;
 	void (*handler)(struct _rfbClientRec* cl);
 	struct _rfbSecurity* next;
+	enum rfbSecurityTag securityTags;
 } rfbSecurityHandler;
 
 /**
@@ -495,7 +501,7 @@ typedef struct _rfbClientRec {
                                 /** Possible client states: */
     enum {
         RFB_PROTOCOL_VERSION,   /**< establishing protocol version */
-	RFB_SECURITY_TYPE,      /**< negotiating security (RFB v.3.7) */
+        RFB_SECURITY_TYPE,      /**< negotiating security (RFB v.3.7) */
         RFB_AUTHENTICATION,     /**< authenticating */
         RFB_INITIALISATION,     /**< sending initialisation messages */
         RFB_NORMAL,             /**< normal protocol messages */
@@ -504,6 +510,8 @@ typedef struct _rfbClientRec {
          * using LibVNCServer to provide services: */
 
         RFB_INITIALISATION_SHARED, /**< sending initialisation messages with implicit shared-flag already true */
+
+        RFB_CHANNEL_SECURITY_TYPE, /**< negotiating security (RFB v.3.7) */
         RFB_SHUTDOWN            /**< Client is shutting down */
     } state;
 
@@ -874,6 +882,9 @@ extern void rfbProcessClientSecurityType(rfbClientPtr cl);
 extern void rfbAuthProcessClientMessage(rfbClientPtr cl);
 extern void rfbRegisterSecurityHandler(rfbSecurityHandler* handler);
 extern void rfbUnregisterSecurityHandler(rfbSecurityHandler* handler);
+extern void rfbRegisterChannelSecurityHandler(rfbSecurityHandler* handler);
+extern void rfbUnregisterChannelSecurityHandler(rfbSecurityHandler* handler);
+extern void rfbSendSecurityTypeList(rfbClientPtr cl, enum rfbSecurityTag exclude);
 
 /* rre.c */
 

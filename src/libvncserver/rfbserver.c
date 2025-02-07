@@ -679,6 +679,7 @@ rfbProcessClientMessage(rfbClientPtr cl)
     case RFB_PROTOCOL_VERSION:
         rfbProcessClientProtocolVersion(cl);
         return;
+    case RFB_CHANNEL_SECURITY_TYPE:
     case RFB_SECURITY_TYPE:
         rfbProcessClientSecurityType(cl);
         return;
